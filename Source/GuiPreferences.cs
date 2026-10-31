@@ -8,7 +8,8 @@ internal static class GuiPreferences
 {
     internal sealed record Settings(bool Vsync=true,bool Dof=true,bool CombatFx=true,
         bool EnemyOutlines=true,bool WeaponVfx=true,bool Fullscreen=false, int Difficulty=1,
-        int ResolutionIndex=1,int EnemyShotGlow=50,int HitEffectStrength=55,int Antialiasing=0);
+        int ResolutionIndex=1,int EnemyShotGlow=50,int HitEffectStrength=55,int Antialiasing=0,
+        bool ControllerHaptics=true,bool AdaptiveTriggers=true,int ControllerStrength=65,bool BluetoothHaptics=false);
 
     private static string PathForSettings()
     {

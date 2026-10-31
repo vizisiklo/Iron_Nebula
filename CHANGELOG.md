@@ -2,6 +2,21 @@
 
 A projekthez tartozó kiadástörténet 2026. október 28-i állapot szerint. A felsorolt Alpha változatok a fejlesztés történeti mérföldkövei; a csomag a **0.9.11.2** állapotot reprezentálja. A fejlesztések funkcionális összefoglalói alapján készült, nem külön-külön Git-commitból rekonstruált történet.
 
+## Alpha 0.9.12 - Online Co-op
+
+- Add a playable 2–6-player host-authoritative Online/LAN mode with lobby, IPv4/DNS
+  connection string, temporary room code and a six-player admission limit.
+- Replicate ships, weapons, beams, drones, enemies, projectiles, hazards, pickups,
+  team credits, shop state, boss phases and sector transitions from the host.
+- Add independent player lives/damage, party colors/HUD, party-scaled enemy hull,
+  local pause/settings, all-ready shop progression and clean disconnect behavior.
+- Preserve solo saves/high scores, smooth mouse flight, Xbox/DualSense support,
+  adaptive triggers, default-off experimental Bluetooth haptics and button icons.
+- Add real-loopback transport checks and a six-process game/render smoke utility.
+  Direct Internet reachability, multi-PC performance and a full human campaign
+  remain unverified. Mid-run reconnect, host migration and co-op save/resume are
+  not part of this initial playable alpha. See [setup](COOP_SUPPORT.md).
+
 ## Alpha 0.9.11.2 – Direct Mouse Flight
 - Az egérmutató pozíciója közvetlenül meghatározza a hajó helyét, követési késleltetés nélkül.
 - Egérkurzor elrejtése a játékban; menükben megmarad. Bal gomb: tüzelés. Billentyűzet és kontroller megmaradt.

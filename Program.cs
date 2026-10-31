@@ -4,6 +4,10 @@ using IronNebula;
 
 try
 {
+    if(args.Contains("--coop-bot"))
+    {
+        Environment.ExitCode=CoopSmokeClient.Run(args).GetAwaiter().GetResult();return;
+    }
     using var game = new IronNebulaGame();
     game.Run();
 }

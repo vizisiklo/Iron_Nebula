@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Linked world-model fields are populated by gameplay or JSON, outside this test executable. -->
+    <NoWarn>$(NoWarn);CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.6" />
+    <Compile Include="../../Source/CoopNetwork.cs" Link="CoopNetwork.cs" />
+    <Compile Include="../../Source/Entities.cs" Link="Entities.cs" />
+  </ItemGroup>
+</Project>

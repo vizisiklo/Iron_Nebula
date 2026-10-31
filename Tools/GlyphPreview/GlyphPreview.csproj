@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.6" />
+    <Compile Include="../../Source/UiRenderer.cs" Link="UiRenderer.cs" />
+    <Compile Include="../../Source/ControllerGlyphRenderer.cs" Link="ControllerGlyphRenderer.cs" />
+  </ItemGroup>
+</Project>

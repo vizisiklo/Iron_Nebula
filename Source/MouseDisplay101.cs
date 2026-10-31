@@ -38,20 +38,18 @@ public sealed partial class IronNebulaGame
         if(!liveFlight) _mouseFlightActive=false;
         if(liveFlight && _mouseValid && (_mouseMoved || _mouseClick || _mouseFlightActive))
         {
-            // The pointer IS the ship, after converting from the letterboxed window
-            // to the 1920x1080 game world. There is no follow speed or acceleration.
+            // Pointer target in the letterboxed game world; flight follows with
+            // a short critically damped tether rather than teleporting.
             _mouseTarget=new Vector2(MathHelper.Clamp(_mouseUi.X,105f,ViewWidth-145f),
                 MathHelper.Clamp(_mouseUi.Y,110f,ViewHeight-115f));
             if(_mouseMoved || _mouseClick) _mouseFlightActive=true;
         }
-        // Keep the native cursor for menus and keyboard/controller flight. When
-        // flying directly with the mouse, the ship sprite itself is the pointer.
-        IsMouseVisible=!(liveFlight && _mouseFlightActive && _mouseValid);
+        IsMouseVisible=true;
     }
 
     private bool MovePilotDirectlyWithMouse(Vector2 keyboardOrPad, float dt)
     {
-        if(keyboardOrPad.LengthSquared()>.015f)
+        if(keyboardOrPad.LengthSquared()>.0001f)
         {
             // Any WASD/arrow/controller movement takes priority. A subsequent
             // mouse move switches straight back to pointer-based flight.
@@ -66,23 +64,25 @@ public sealed partial class IronNebulaGame
             _pilot.Velocity=Vector2.Zero;
             return true;
         }
-        Vector2 oldPosition=_pilot.Position;
-        _pilot.Position=_mouseTarget; // Instant 1:1 pointer positioning, not a chase.
-        // Velocity remains a bounded visual/gameplay hint for tilt and prediction;
-        // it must not be fed back into position when the mouse controls the ship.
-        Vector2 delta=(_pilot.Position-oldPosition)/MathF.Max(dt,.001f);
-        float length=delta.Length();
-        if(length>550f) delta*=550f/length;
-        _pilot.Velocity=delta;
+        // Exact critically damped spring integration: stable for variable dt,
+        // smooth acceleration, no overshoot from a stationary start.
+        float spring=_precisionFire?12f:18f;
+        Vector2 offset=_pilot.Position-_mouseTarget;
+        Vector2 impulse=_pilot.Velocity+spring*offset;
+        float decay=MathF.Exp(-spring*dt);
+        _pilot.Position=_mouseTarget+(offset+impulse*dt)*decay;
+        _pilot.Velocity=(_pilot.Velocity-spring*impulse*dt)*decay;
+        _pilot.Position=new Vector2(MathHelper.Clamp(_pilot.Position.X,105f,ViewWidth-145f),
+            MathHelper.Clamp(_pilot.Position.Y,110f,ViewHeight-115f));
         return true;
     }
 
     private bool HandleTitleMouseInput()
     {
-        if(!_mouseValid) return false;
-        for(int i=0;i<5;i++)
+        if(!_mouseValid || (!_mouseMoved && !_mouseClick)) return false;
+        for(int i=0;i<6;i++)
         {
-            Rectangle r=new(110,375+i*124,827,111);
+            Rectangle r=new(110,375+i*103,827,94);
             if(r.Contains((int)_mouseUi.X,(int)_mouseUi.Y))
             {
                 _titleMenuSelection=i;
@@ -93,7 +93,7 @@ public sealed partial class IronNebulaGame
     }
     private bool HandlePauseMouseInput()
     {
-        if(!_mouseValid) return false;
+        if(!_mouseValid || (!_mouseMoved && !_mouseClick)) return false;
         for(int i=0;i<4;i++)
         {
             Rectangle r=new(486,365+i*129,950,115);
@@ -145,6 +145,7 @@ public sealed partial class IronNebulaGame
     }
     private void ContinueShopByMouse()
     {
+        if(CoopActive) { _coopReady=!_coopReady;return; }
         if(_shopAfterFinalSector && _infernoActive) FinishRun(true);
         else
         {
@@ -165,8 +166,16 @@ public sealed partial class IronNebulaGame
             return true;
         }
         if(!_settingsOpen) return false;
-        if(MouseHit(new Rectangle(103,239,828,85))) { _settingsTab=0;return true; }
-        if(MouseHit(new Rectangle(971,239,828,85))) { _settingsTab=1;return true; }
+        if(MouseHit(new Rectangle(103,239,548,85))) { _settingsTab=0;return true; }
+        if(MouseHit(new Rectangle(677,239,548,85))) { _settingsTab=1;return true; }
+        if(MouseHit(new Rectangle(1251,239,548,85))) { _settingsTab=2;return true; }
+        if(_settingsTab==2)
+        {
+            for(int i=0;i<4;i++)
+                if(MouseHit(new Rectangle(103,410+i*124,1696,112)))
+                { _controllerSelection=i;ChangeControllerSetting(i,1);return true; }
+            return false;
+        }
         if(_settingsTab==1)
         {
             int first=(_controlsSelection/8)*8;
@@ -279,6 +288,6 @@ public sealed partial class IronNebulaGame
             _ui.Rect(_batch,new Rectangle(r.X,r.Y,active?9:3,r.Height),active?gold:cyan*.6f);
             _ui.Text(_batch,ResolutionOptions[index].Name,new Vector2(r.X+25,r.Y+12),.53f,active?gold:Color.White);
         }
-        _ui.Text(_batch,"ENTER / CLICK  APPLY       ESC  CANCEL",new Vector2(1062,846),.33f,cyan);
+        _ui.TextFit(_batch,ConfirmPrompt+" APPLY     "+BackPrompt+" CANCEL",new Vector2(1062,846),.33f,780,cyan);
     }
 }

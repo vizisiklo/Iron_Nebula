@@ -61,6 +61,7 @@ internal sealed class Enemy
     public float SmokeTimer; // purely visual, per-enemy smoke cadence
     public float Banking; // smoothed visual movement angle (-1 up, +1 down)
     public bool DifficultyApplied; // health / fire rate tuned exactly once on first update
+    [System.Text.Json.Serialization.JsonIgnore]
     public Enemy? Parent; // boss weapon module; destroyed independently
     public Vector2 MountOffset;
 }
@@ -71,6 +72,7 @@ internal sealed class Projectile
     public Vector2 PreviousPosition;
     public Vector2 Velocity;
     public bool Friendly;
+    public int OwnerPlayerId;
     public bool IsDroneShot;
     public float Radius;
     public float Age;
@@ -80,7 +82,9 @@ internal sealed class Projectile
     public PrimaryWeaponMode PrimaryMode = PrimaryWeaponMode.Pulse;
     // A Lance projectile may cross several distinct targets; never damage one twice.
     public int HitsRemaining = 1;
+    [System.Text.Json.Serialization.JsonIgnore]
     public readonly HashSet<Enemy> HitEnemies = new();
+    [System.Text.Json.Serialization.JsonIgnore]
     public readonly HashSet<Debris> HitRocks = new();
 }
 

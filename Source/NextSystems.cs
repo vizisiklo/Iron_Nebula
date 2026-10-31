@@ -9,19 +9,77 @@ public sealed partial class IronNebulaGame
 {
     private readonly ControlBindings _bindings = new();
     private GamePadState _pad, _previousPad;
+    private PlayerIndex _activePadIndex = PlayerIndex.One;
+    private bool _padWasConnected;
+    private readonly DualSenseDevice _dualSense=new();
+    private bool _usingDualSense;
+    private int _dualSenseGeneration;
+    private readonly ControllerNavigation _padNavigation=new();
+    private Vector2 FlightStick => _pad.ThumbSticks.Right.LengthSquared()>_pad.ThumbSticks.Left.LengthSquared()
+        ? _pad.ThumbSticks.Right : _pad.ThumbSticks.Left;
+
+    private void SampleGamePadInput(float dt)
+    {
+        if(_dualSense.TryState(out var sony,out int generation))
+        {
+            bool changed=!_usingDualSense || generation!=_dualSenseGeneration;
+            if(changed) StopGamePadFeedback();
+            _usingDualSense=true;_dualSenseGeneration=generation;
+            _pad=sony;
+            if(changed) { _previousPad=sony;_padNavigation.Reset(sony); }
+            _padWasConnected=true;
+            UpdatePadMenuRepeat(dt);
+            return;
+        }
+        if(_usingDualSense)
+        {
+            StopGamePadFeedback();_usingDualSense=false;_padWasConnected=false;
+            _padNavigation.Reset(default);
+        }
+        // Retain the selected XInput slot until disconnected; Windows may assign
+        // an Xbox controller to any of the four slots.
+        _pad=GamePad.GetState(_activePadIndex,GamePadDeadZone.Circular);
+        if(_pad.IsConnected)
+        {
+            if(!_padWasConnected) { _previousPad=_pad;_padNavigation.Reset(_pad); }
+            _padWasConnected=true;
+            UpdatePadMenuRepeat(dt);
+            return;
+        }
+        StopGamePadFeedback();
+        _padWasConnected=false;
+        _previousPad=default;
+        for(int i=0;i<4;i++)
+        {
+            var index=(PlayerIndex)i;
+            var candidate=GamePad.GetState(index,GamePadDeadZone.Circular);
+            if(!candidate.IsConnected) continue;
+            _activePadIndex=index;
+            _pad=candidate;
+            // A held button on reconnect must not activate a menu or fire an edge.
+            _previousPad=candidate;
+            _padNavigation.Reset(candidate);
+            _padWasConnected=true;
+            break;
+        }
+        UpdatePadMenuRepeat(dt);
+    }
+
+    private void UpdatePadMenuRepeat(float dt)
+        =>_padNavigation.Update(_pad,IsActive,dt);
     private bool _restoringRun;
     private bool _hasDiskSave;
-    private int _settingsTab; // 0 audiovisual, 1 key bindings
+    private int _settingsTab; // 0 audiovisual, 1 key bindings, 2 controllers
     private int _controlsSelection, _helpPage;
     private bool _bindingCapture;
     private string _bindingNotice="";
 
     private bool PadPressed(Buttons b) => _pad.IsConnected && _pad.IsButtonDown(b) && !_previousPad.IsButtonDown(b);
     private bool PadDown(Buttons b) => _pad.IsConnected && _pad.IsButtonDown(b);
-    private bool PadUp() => PadPressed(Buttons.DPadUp) || (_pad.IsConnected && _pad.ThumbSticks.Left.Y>.65f && _previousPad.ThumbSticks.Left.Y<=.65f);
-    private bool PadDownMenu() => PadPressed(Buttons.DPadDown) || (_pad.IsConnected && _pad.ThumbSticks.Left.Y<-.65f && _previousPad.ThumbSticks.Left.Y>=-.65f);
-    private bool PadLeft() => PadPressed(Buttons.DPadLeft) || (_pad.IsConnected && _pad.ThumbSticks.Left.X<-.65f && _previousPad.ThumbSticks.Left.X>=-.65f);
-    private bool PadRight() => PadPressed(Buttons.DPadRight) || (_pad.IsConnected && _pad.ThumbSticks.Left.X>.65f && _previousPad.ThumbSticks.Left.X<=.65f);
+    private bool PadUp() => _padNavigation[0];
+    private bool PadDownMenu() => _padNavigation[1];
+    private bool PadLeft() => _padNavigation[2];
+    private bool PadRight() => _padNavigation[3];
     private bool MenuUp(KeyboardState k) => KeyPressed(k,Keys.Up)||KeyPressed(k,Keys.W)||PadUp();
     private bool MenuDown(KeyboardState k) => KeyPressed(k,Keys.Down)||KeyPressed(k,Keys.S)||PadDownMenu();
     private bool MenuLeft(KeyboardState k) => KeyPressed(k,Keys.Left)||KeyPressed(k,Keys.A)||PadLeft();
@@ -60,16 +118,26 @@ public sealed partial class IronNebulaGame
     private Vector2 FlightDirection(KeyboardState keys)
     {
         Vector2 dir=Vector2.Zero;
-        if(ActionDown(keys,GameAction.MoveLeft)) dir.X-=1f;
-        if(ActionDown(keys,GameAction.MoveRight)) dir.X+=1f;
-        if(ActionDown(keys,GameAction.MoveUp)) dir.Y-=1f;
-        if(ActionDown(keys,GameAction.MoveDown)) dir.Y+=1f;
+        if(_bindings.Down(keys,GameAction.MoveLeft)) dir.X-=1f;
+        if(_bindings.Down(keys,GameAction.MoveRight)) dir.X+=1f;
+        if(_bindings.Down(keys,GameAction.MoveUp)) dir.Y-=1f;
+        if(_bindings.Down(keys,GameAction.MoveDown)) dir.Y+=1f;
         if(_pad.IsConnected)
         {
-            Vector2 analog=new(_pad.ThumbSticks.Left.X,-_pad.ThumbSticks.Left.Y);
+            Vector2 stick=FlightStick;
+            Vector2 analog=new(stick.X,-stick.Y);
             bool keyboardMove=_bindings.Down(keys,GameAction.MoveLeft)||_bindings.Down(keys,GameAction.MoveRight)||
                 _bindings.Down(keys,GameAction.MoveUp)||_bindings.Down(keys,GameAction.MoveDown);
-            if(!keyboardMove && analog.LengthSquared()>.07f) dir=analog;
+            if(!keyboardMove)
+            {
+                // Circular dead zone is already applied by MonoGame. Preserve
+                // proportional stick speed instead of a second digital threshold.
+                dir=analog;
+                if(_pad.DPad.Left==ButtonState.Pressed) dir.X=-1f;
+                if(_pad.DPad.Right==ButtonState.Pressed) dir.X=1f;
+                if(_pad.DPad.Up==ButtonState.Pressed) dir.Y=-1f;
+                if(_pad.DPad.Down==ButtonState.Pressed) dir.Y=1f;
+            }
         }
         if(dir.LengthSquared()>1f) dir.Normalize();
         return dir;
@@ -77,7 +145,7 @@ public sealed partial class IronNebulaGame
 
     private void SaveBoundary(string stage)
     {
-        if(_trainingRun||_restoringRun) return;
+        if(CoopActive||_trainingRun||_restoringRun) return;
         bool shop=stage=="Shop";
         var data=new RunSaveData
         {

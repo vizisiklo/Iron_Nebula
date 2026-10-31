@@ -39,7 +39,8 @@ public sealed partial class IronNebulaGame
     {
         if(enemy.DifficultyApplied) return;
         enemy.DifficultyApplied=true;
-        int hp=Math.Max(1,(int)MathF.Ceiling(enemy.MaxHealth*DifficultyHpFactor));
+        float partyFactor=_coopHost!=null?1f+.65f*Math.Max(0,_party.Count-1):1f;
+        int hp=Math.Max(1,(int)MathF.Ceiling(enemy.MaxHealth*DifficultyHpFactor*partyFactor));
         enemy.Health=hp;enemy.MaxHealth=hp;
         // Cooldown scales continuously in the enemy update loops, including phase changes.
     }

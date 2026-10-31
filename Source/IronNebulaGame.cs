@@ -74,7 +74,7 @@ public sealed partial class IronNebulaGame : Game
     private readonly Random _random=new(48120);
     // Separate RNG: visual-only sparks must not change gameplay spawn/drop rolls.
     private readonly Random _fxRandom=new(98123);
-    private readonly Pilot _pilot=new();
+    private Pilot _pilot=new();
     private readonly List<Enemy> _enemies=new();
     private readonly List<Projectile> _shots=new();
     // Immutable, pre-rendered primary projectiles and directional contact effects.
@@ -157,8 +157,9 @@ public sealed partial class IronNebulaGame : Game
         IsFixedTimeStep=true;
         TargetElapsedTime=TimeSpan.FromSeconds(1.0/60.0);
         IsMouseVisible=true;
-        Window.Title="IRON NEBULA  |  ALPHA 0.9.11.2 - DIRECT MOUSE FLIGHT";
+        Window.Title="IRON NEBULA  |  ALPHA 0.9.12 - ONLINE CO-OP / XBOX / DUALSENSE";
         Window.AllowUserResizing=true;
+        InactiveSleepTime=TimeSpan.FromMilliseconds(5);
     }
 
     protected override void LoadContent()
@@ -302,6 +303,7 @@ public sealed partial class IronNebulaGame : Game
         LoadGuiPreferences();
         _bindings.Load();
         _hasDiskSave=RunSaveStore.Read()!=null;
+        InitializeCoopArguments();
         base.LoadContent();
     }
 
@@ -485,13 +487,13 @@ public sealed partial class IronNebulaGame : Game
     private void FinishRun(bool completed)
     {
         if(completed) _score+=_pilot.Lives*1000+_pilot.Health*250;
-        if(!_trainingRun && _score>_bestScore)
+        if(!CoopActive && !_trainingRun && _score>_bestScore)
         {
             _bestScore=_score;
             ScoreStore.WriteBest(_bestScore);
         }
         _mode=completed?GameMode.Victory:GameMode.GameOver;
-        if(completed && !_trainingRun) { RunSaveStore.Delete(); _hasDiskSave=false; }
+        if(completed && !CoopActive && !_trainingRun) { RunSaveStore.Delete(); _hasDiskSave=false; }
     }
 
     private void Alert(string message,float seconds)
@@ -509,7 +511,23 @@ public sealed partial class IronNebulaGame : Game
         _audio?.Tick(dt);
         SampleMouseInput();
         KeyboardState keys=Keyboard.GetState();
-        _pad=GamePad.GetState(PlayerIndex.One);
+        SampleGamePadInput(dt);
+        UpdateGamePadFeedback(dt);
+        if(UpdateCoop(dt,keys))
+        {
+            _previousKeys=keys;_previousPad=_pad;base.Update(gameTime);return;
+        }
+        if(!IsActive)
+        {
+            if(_mode==GameMode.Playing) { _mode=GameMode.Paused;_pauseMenuSelection=0; }
+            _beamActive=false;
+            _beamDamageTimer=0f;
+            _audio?.Beam(false);
+            _previousKeys=keys;
+            _previousPad=_pad;
+            base.Update(gameTime);
+            return;
+        }
         if(!_bindingCapture && !_difficultyPromptOpen && (KeyPressed(keys,Keys.F1)||PadPressed(Buttons.Back)))
         { _helpOpen=!_helpOpen;_settingsOpen=false;_bindingCapture=false;_audio?.Beam(false); }
         if(!_bindingCapture && !_difficultyPromptOpen && (KeyPressed(keys,Keys.F12) || KeyPressed(keys,Keys.O) || PadPressed(Buttons.Y)))
@@ -540,8 +558,9 @@ public sealed partial class IronNebulaGame : Game
             else if(_settingsOpen)
             {
                 if(!_bindingCapture && (KeyPressed(keys,Keys.Tab)||PadPressed(Buttons.RightShoulder)))
-                { _settingsTab=1-_settingsTab;_bindingNotice=""; }
+                { _settingsTab=(_settingsTab+1)%3;_bindingNotice=""; }
                 else if(_settingsTab==1) UpdateControlsMenu(keys);
+                else if(_settingsTab==2) UpdateControllerSettings(keys);
                 else UpdateAudioSettings(keys);
             }
             _previousKeys=keys;
@@ -589,8 +608,8 @@ public sealed partial class IronNebulaGame : Game
         if(_mode==GameMode.Title)
         {
             UpdateBackground(dt,.36f);
-            if(MenuUp(keys)) _titleMenuSelection=(_titleMenuSelection+4)%5;
-            if(MenuDown(keys)) _titleMenuSelection=(_titleMenuSelection+1)%5;
+            if(MenuUp(keys)) _titleMenuSelection=(_titleMenuSelection+5)%6;
+            if(MenuDown(keys)) _titleMenuSelection=(_titleMenuSelection+1)%6;
             if(MenuConfirm(keys) || HandleTitleMouseInput()) ActivateTitleMenu();
         }
         else if(_mode==GameMode.GameOver || _mode==GameMode.Victory)
@@ -607,7 +626,7 @@ public sealed partial class IronNebulaGame : Game
             UpdateScheduledDeathBursts(dt);
             UpdateShockwaves(dt);
             if(KeyPressed(keys,Keys.R)||MenuConfirm(keys)||MouseHit(new Rectangle(535,709,850,94))) OpenNewGameDifficulty();
-            else if(_mode==GameMode.GameOver && KeyPressed(keys,Keys.C) && _checkpointUnlocked) ResumeAtCheckpoint();
+            else if(_mode==GameMode.GameOver && (KeyPressed(keys,Keys.C)||PadPressed(Buttons.X)) && _checkpointUnlocked) ResumeAtCheckpoint();
             if(MenuBack(keys)) { _titleMenuSelection=0;_mode=GameMode.Title; }
         }
         else if(_mode==GameMode.Shop)
@@ -658,7 +677,8 @@ public sealed partial class IronNebulaGame : Game
                 break;
             case 2: _settingsOpen=true;_settingsSelection=0;_settingsTab=0; break;
             case 3: _helpOpen=true;_helpPage=0; break;
-            case 4: Exit(); break;
+            case 4: OpenCoopMenu();break;
+            case 5: Exit(); break;
         }
     }
 
@@ -689,13 +709,18 @@ public sealed partial class IronNebulaGame : Game
         _enemyShotGlow=Math.Clamp(v.EnemyShotGlow,0,100);
         _hitEffectStrength=Math.Clamp(v.HitEffectStrength,0,100);
         _msaaRequest=Math.Clamp(v.Antialiasing,0,3);
+        _controllerHaptics=v.ControllerHaptics;
+        _adaptiveTriggers=v.AdaptiveTriggers;
+        _controllerStrength=Math.Clamp(v.ControllerStrength,0,100);
+        _bluetoothHaptics=v.BluetoothHaptics;
         ApplyDisplayConfiguration();
     }
 
     private void SaveGuiPreferences()
         =>GuiPreferences.Write(new GuiPreferences.Settings(_vsyncEnabled,_dofEnabled,
             _combatFxEnabled,_enemyReadabilityEnabled,_primaryVfxEnabled,_fullscreen,(int)_selectedDifficulty,
-            _resolutionIndex,_enemyShotGlow,_hitEffectStrength,_msaaRequest));
+            _resolutionIndex,_enemyShotGlow,_hitEffectStrength,_msaaRequest,
+            _controllerHaptics,_adaptiveTriggers,_controllerStrength,_bluetoothHaptics));
 
     private static int ShopTabOf(int item)=>item switch
     {
@@ -856,6 +881,7 @@ public sealed partial class IronNebulaGame : Game
         if(MenuConfirm(keys)) PurchaseSelectedItem();
         if(KeyPressed(keys,Keys.C)||PadPressed(Buttons.Start))
         {
+            if(CoopActive) return; // Party-ready barrier is handled by UpdateCoop.
             if(_shopAfterFinalSector && _infernoActive) FinishRun(true);
             else
             {
@@ -1010,11 +1036,11 @@ private void DrawShop()
     _ui.TextFit(_batch,priceText,new Vector2(1512,847),.74f,345,gold);
     if(_shopFeedbackTime>0)
         _ui.TextFit(_batch,_shopFeedback,new Vector2(515,912),.39f,650,Color.LawnGreen);
-    DrawMenuButton(new Rectangle(1508,908,352,61),"BUY SELECTED",false,false,.45f);
+    DrawMenuButton(new Rectangle(1508,908,352,61),_coopClient!=null?"HOST ONLY":ConfirmPrompt+" BUY",false,_coopClient!=null,.45f);
     _ui.Rect(_batch,new Rectangle(0,982,ViewWidth,98),new Color(2,11,27,247));
-    _ui.TextShadow(_batch,"LEFT / RIGHT  CATEGORY        CLICK ITEM / ENTER  BUY",
+    _ui.TextShadow(_batch,HorizontalPrompt+" CATEGORY     "+ConfirmPrompt+" BUY",
         new Vector2(750,1007),.41f,cyan,true);
-    DrawMenuButton(new Rectangle(1636,990,264,78),"CONTINUE",true,false,.42f);
+    DrawMenuButton(new Rectangle(1636,990,264,78),ContinuePrompt+(CoopActive?" READY":" NEXT"),true,false,.42f);
 }
 
     private void UpdateBackground(float dt,float factor=1)
@@ -1100,7 +1126,7 @@ private void DrawShop()
         {
             // Keyboard and controller retain their normal inertia and speed upgrades.
             float speed=(_precisionFire?260f:550f)*(1f+.08f*_pilot.EngineLevel);
-            float blend=Math.Min(1f,dt*(direction==Vector2.Zero?17f:10f));
+            float blend=1f-MathF.Exp(-dt*(direction==Vector2.Zero?14f:9f));
             _pilot.Velocity=Vector2.Lerp(_pilot.Velocity,direction*speed,blend);
             _pilot.Position+=_pilot.Velocity*dt;
             _pilot.Position=new Vector2(MathHelper.Clamp(_pilot.Position.X,105,ViewWidth-145),MathHelper.Clamp(_pilot.Position.Y,110,ViewHeight-115));
@@ -1218,6 +1244,8 @@ private void DrawShop()
 
     private void FirePlayerWeapon()
     {
+        PulseGamePad(_pilot.PrimaryMode==PrimaryWeaponMode.Lance?.25f:.08f,
+            _pilot.PrimaryMode==PrimaryWeaponMode.Gatling?.12f:.22f);
         // Pulse/Lance/Arc: exactly one projectile per level. Gatling fires ONE rapid shot;
         // Beam is handled by UpdateContinuousBeam and never creates ordinary shots.
         int level=Math.Clamp(_pilot.WeaponLevel,1,Pilot.MaxWeaponLevel);
@@ -1296,7 +1324,7 @@ private void DrawShop()
             if(oldestHostile>=0) _shots.RemoveAt(oldestHostile);
             else _shots.RemoveAt(0);
         }
-        _shots.Add(new Projectile{Position=position,PreviousPosition=position,Velocity=velocity,Friendly=friendly,Damage=damage,Radius=radius,Tint=color});
+        _shots.Add(new Projectile{Position=position,PreviousPosition=position,Velocity=velocity,Friendly=friendly,OwnerPlayerId=_coopActorId,Damage=damage,Radius=radius,Tint=color});
     }
 
     private void SpawnPrimaryImpact(Projectile projectile,Vector2 point)
@@ -1326,6 +1354,7 @@ private void DrawShop()
 
     private void RecordPrimaryDamage(Enemy target,int damage,Projectile shot)
     {
+        CoopRecordDamage(shot,damage);
         if(!_primaryVfxEnabled || shot.IsDroneShot || !shot.Friendly) return;
         for(int i=_primaryReadouts.Count-1;i>=0;i--)
         {
@@ -1780,9 +1809,8 @@ private void DrawShop()
                 _debris.RemoveAt(i);
                 continue;
             }
-            if(_pilot.Invincible<=0 && Vector2.DistanceSquared(d.Position,_pilot.Position)<MathF.Pow(d.Radius*.82f+_pilot.Radius,2))
+            if(HurtCoopCircle(d.Position,d.Radius*.82f))
             {
-                HurtPilot();
                 d.Health=0;
                 Boom(d.Position,15,Color.Orange);
                 _debris.RemoveAt(i);
@@ -1810,8 +1838,7 @@ private void DrawShop()
                 _laserLanes.RemoveAt(i);
                 continue;
             }
-            if(laser.Age>=laser.Warning && _pilot.Invincible<=0 && Math.Abs(_pilot.Position.Y-laser.Y)<54f)
-                HurtPilot();
+            if(laser.Age>=laser.Warning) HurtCoopLane(laser.Y);
         }
     }
 
@@ -2131,9 +2158,8 @@ private void DrawShop()
                 _enemies.Remove(e);
                 continue;
             }
-            if(_pilot.Invincible<=0 && Vector2.DistanceSquared(e.Position,_pilot.Position) < MathF.Pow(e.Radius+_pilot.Radius,2))
+            if(HurtCoopCircle(e.Position,e.Radius))
             {
-                HurtPilot();
                 if(e.Kind!=EnemyKind.Sentinel && e.Kind!=EnemyKind.Warden &&
                     e.Kind!=EnemyKind.RiftGuardian && e.Kind!=EnemyKind.RiftColossus && e.Kind!=EnemyKind.RiftBossTurret &&
                     !IsInfernoBoss(e.Kind) && e.Kind!=EnemyKind.InfernoBossTurret)
@@ -2390,7 +2416,7 @@ private void DrawShop()
             target.Health-=beamDamage;
             target.HitFlash=MathF.Max(target.HitFlash,.50f);
             target.HitReaction=MathF.Max(target.HitReaction,.07f);
-            Projectile beamContact=new() { Friendly=true,PrimaryMode=PrimaryWeaponMode.Beam,Tint=PrimaryWeaponColor(PrimaryWeaponMode.Beam) };
+            Projectile beamContact=new() { Friendly=true,OwnerPlayerId=_coopActorId,PrimaryMode=PrimaryWeaponMode.Beam,Tint=PrimaryWeaponColor(PrimaryWeaponMode.Beam) };
             RecordPrimaryDamage(target,beamDamage,beamContact);
             SpawnPrimaryImpact(beamContact,_beamEnd);
             OnBossImpact(target,_beamEnd);
@@ -2483,9 +2509,9 @@ private void DrawShop()
                 }
                 if(consumed) _shots.Remove(shot);
             }
-            else if(_pilot.Invincible<=0 && SegmentDistanceSquared(_pilot.Position,shot.PreviousPosition,shot.Position)<MathF.Pow(shot.Radius+_pilot.Radius,2))
+            else if(CoopActive?HurtCoopShot(shot):_pilot.Invincible<=0 && SegmentDistanceSquared(_pilot.Position,shot.PreviousPosition,shot.Position)<MathF.Pow(shot.Radius+_pilot.Radius,2))
             {
-                HurtPilot();
+                if(!CoopActive) HurtPilot();
                 _shots.Remove(shot);
             }
         }
@@ -2503,6 +2529,7 @@ private void DrawShop()
     private void HurtPilot()
     {
         if(_pilot.Invincible>0 || _bossFinaleTimer>0) return;
+        PulseGamePad(_pilot.Shield>0?.45f:1f,_pilot.Shield>0?.70f:.85f);
         if(_hitEffectStrength>0) _hitFeedbackTime=.5f;
         _audio?.Effect(_pilot.Shield>0?"shield":"damage",.20f,.7f);
         if(_pilot.Shield>0)
@@ -2528,6 +2555,7 @@ private void DrawShop()
         Boom(_pilot.Position,45,Color.Cyan);
         if(_pilot.Lives<=0)
         {
+            if(CoopActive) { _pilot.Health=0;_pilot.Invincible=float.MaxValue;_pilot.Velocity=Vector2.Zero;return; }
             FinishRun(false);
             return;
         }
@@ -2535,7 +2563,7 @@ private void DrawShop()
         _pilot.WeaponLevel=Math.Max(1,_pilot.WeaponLevel-1);
         _damageSmokes.Clear();
         _damageSmokeTimer=0;
-        _pilot.Position=new Vector2(315,540);
+        _pilot.Position=CoopActive?CoopSpawnPoint(_coopActorId):new Vector2(315,540);
         _pilot.Velocity=Vector2.Zero;
         _pilot.DronePosition=_pilot.Position+new Vector2(-125,-100);
         _pilotBank=0;
@@ -2602,6 +2630,7 @@ private void DrawShop()
         for(int i=_pickups.Count-1;i>=0;i--)
         {
             var power=_pickups[i];
+            SelectCoopPickupPilot(power.Position);
             power.Age+=dt;
             // gentle pickup magnet: logical QoL step so upgrades are easier to collect in combat
             Vector2 toPilot=_pilot.Position-power.Position;
@@ -2701,6 +2730,12 @@ private void DrawShop()
 
     private void Boom(Vector2 where,int amount,Color baseColor)
     {
+        if(amount>=16)
+        {
+            float proximity=1f-MathHelper.Clamp(Vector2.Distance(where,_pilot.Position)/1200f,0f,1f);
+            float impact=MathHelper.Clamp(amount/120f,.08f,.65f)*proximity;
+            PulseGamePad(impact,impact*.45f);
+        }
         if(amount>=16) _audio?.Effect("explosion",.15f,amount>=60?.85f:.55f);
         if(amount>=7 && _combatFxEnabled)
         {
@@ -3058,6 +3093,7 @@ private void DrawShop()
             Vector2 jitter=Vector2.Zero;
             _batch.Begin(blendState:BlendState.AlphaBlend,samplerState:SamplerState.LinearClamp,transformMatrix:Matrix.CreateTranslation(jitter.X,jitter.Y,0));
             DrawActors();
+            DrawCoopOtherPilots();
             _batch.End();
             _batch.Begin(blendState:BlendState.Additive,samplerState:SamplerState.LinearClamp,transformMatrix:Matrix.CreateTranslation(jitter.X,jitter.Y,0));
             DrawLights();
@@ -3065,6 +3101,7 @@ private void DrawShop()
         }
         _batch.Begin(blendState:BlendState.AlphaBlend,samplerState:SamplerState.LinearClamp);
         DrawOverlay();
+        DrawCoopOverlay();
         if(_performanceOverlay && (_mode==GameMode.Playing || _mode==GameMode.Paused)) DrawPerformanceOverlay();
         if(_helpOpen) DrawHelpOverlay();
         if(_settingsOpen) DrawSettingsOverlay();
@@ -3073,6 +3110,7 @@ private void DrawShop()
         _batch.End();
 
         PresentSceneWithHitFeedback();
+        CaptureCoopVisualSmoke();
         CountRenderedFrame(gameTime);
         base.Draw(gameTime);
     }
@@ -3341,7 +3379,7 @@ private void DrawShop()
         }
 
         DrawTacticalAimCues();
-        if(_mode==GameMode.Playing || _mode==GameMode.Paused)
+        if((_mode==GameMode.Playing || _mode==GameMode.Paused) && (!CoopActive || _pilot.Lives>0))
         {
             // Always show the hull: old invulnerability flashing made it disappear repeatedly.
             float invulnerabilityGlow=_pilot.Invincible>0 ? .12f+.04f*(float)Math.Sin(_travel*6f) : 0f;
@@ -3697,18 +3735,20 @@ private void DrawHelpOverlay()
     }
     else if(_helpPage==1)
     {
-        keysA=new[]{"ARROWS / MOUSE","ENTER / CLICK","ESC / B","LEFT / RIGHT / CLICK","C / START",
-            "F1 / BACK","F12 / O / Y","TAB / RB","DELETE","ENTER / A"};
+        keysA=new[]{NavigatePrompt,ConfirmPrompt,BackPrompt,HorizontalPrompt,ContinuePrompt,
+            HelpPrompt,SettingsPrompt,PagePrompt,"DELETE (KEYBOARD)",ConfirmPrompt};
         labelsA=new[]{"NAVIGATE MENUS","CONFIRM / BUY","RETURN / CLOSE",
             "CHANGE SHOP CATEGORY","NEXT SECTOR AFTER SHOP","OPEN / CLOSE HELP",
             "OPEN SETTINGS","SETTINGS PAGE SWITCH","RESET KEY BINDINGS", "NEW GAME: CHOOSE DIFFICULTY"};
     }
     else if(_helpPage==2)
     {
-        keysA=new[]{"LEFT STICK","D-PAD","RT / X","LT","LB / RB","START","A / B","BACK","Y"};
+        keysA=_usingDualSense
+            ?new[]{"\uE009 / \uE00A","\uE008","\uE012 / \uE006","\uE011","\uE00F / \uE010","\uE015","\uE004 / \uE005","\uE016 / \uE017","\uE007","\uE006"}
+            :new[]{"\uE009 / \uE00A","\uE008","\uE00E / \uE002","\uE00D","\uE00B / \uE00C","\uE013","\uE000 / \uE001","\uE014","\uE003","\uE002"};
         labelsA=new[]{"ANALOG SHIP MOVEMENT","DIGITAL MOVE / MENUS",
             "FIRE / HOLD BEAM","PRECISION MOVEMENT","PREV / NEXT WEAPON",
-            "PAUSE / NEXT SECTOR","CONFIRM / CANCEL","OPEN / CLOSE HELP","OPEN / CLOSE SETTINGS"};
+            "PAUSE / NEXT SECTOR","CONFIRM / CANCEL","OPEN / CLOSE HELP","OPEN / CLOSE SETTINGS","RESUME CHECKPOINT"};
     }
     else
     {
@@ -3727,7 +3767,7 @@ private void DrawHelpOverlay()
         _ui.TextFit(_batch,keysA[i].ToUpperInvariant(),new Vector2(x+27,y+7),.61f,780,gold);
         _ui.TextFit(_batch,labelsA[i],new Vector2(x+30,y+66),.47f,785,muted);
     }
-    _ui.TextShadow(_batch,"CLICK LEFT / RIGHT TO CHANGE PAGE       F1 / ESC / B  CLOSE",
+    _ui.TextShadow(_batch,HorizontalPrompt+" PAGE     "+HelpPrompt+" / "+BackPrompt+" CLOSE",
         new Vector2(ViewWidth/2,1009),.46f,cyan,true);
 }
 
@@ -3735,8 +3775,10 @@ private void DrawSettingsOverlay()
 {
     ModalPanel("SYSTEM CONFIGURATION");
     Color cyan=new(105,225,252),gold=new(255,205,107),muted=new(188,218,240);
-    DrawMenuButton(new Rectangle(103,239,828,85),"AUDIO / VIDEO",_settingsTab==0,false,.70f);
-    DrawMenuButton(new Rectangle(971,239,828,85),"KEY BINDINGS",_settingsTab==1,false,.70f);
+    DrawMenuButton(new Rectangle(103,239,548,85),"AUDIO / VIDEO",_settingsTab==0,false,.60f);
+    DrawMenuButton(new Rectangle(677,239,548,85),"KEY BINDINGS",_settingsTab==1,false,.60f);
+    DrawMenuButton(new Rectangle(1251,239,548,85),"CONTROLLERS",_settingsTab==2,false,.60f);
+    if(_settingsTab==2) { DrawControllerSettings();return; }
     if(_settingsTab==1)
     {
         int page=_controlsSelection/8;
@@ -3757,9 +3799,9 @@ private void DrawSettingsOverlay()
             _ui.TextFit(_batch,action.ToString().ToUpperInvariant(),new Vector2(x+31,y+16),.57f,670,chosen?Color.White:muted);
             _ui.TextFit(_batch,_bindings[action].ToString().ToUpperInvariant(),new Vector2(x+33,y+72),.54f,610,chosen?gold:cyan);
         }
-        _ui.TextFit(_batch,_bindingCapture?"PRESS NEW KEY - ESC CANCEL":_bindingNotice,
+        _ui.TextFit(_batch,_bindingCapture?"PRESS NEW KEY - "+BackPrompt+" CANCEL":_bindingNotice,
             new Vector2(107,966),.43f,1680,_bindingCapture?gold:cyan);
-        _ui.TextShadow(_batch,"UP / DOWN  SELECT      ENTER  REBIND      DELETE  RESET      TAB  AUDIO / VIDEO",
+        _ui.TextShadow(_batch,NavigatePrompt+" SELECT   "+ConfirmPrompt+" REBIND   DELETE RESET   "+PagePrompt+" NEXT PAGE",
             new Vector2(ViewWidth/2,1024),.40f,Color.White,true);
         return;
     }
@@ -3789,7 +3831,7 @@ private void DrawSettingsOverlay()
             _ui.Bar(_batch,new Rectangle(x+460,y+58,335,14),val/100f,cyan);
         }
     }
-    _ui.TextShadow(_batch,"CLICK / ENTER  RESOLUTION LIST     ARROWS  ADJUST     TAB  KEY BINDINGS     ESC  CLOSE",
+    _ui.TextShadow(_batch,ConfirmPrompt+" SELECT   "+NavigatePrompt+" ADJUST   "+PagePrompt+" NEXT PAGE   "+BackPrompt+" CLOSE",
         new Vector2(ViewWidth/2,1017),.43f,cyan,true);
     if(_resolutionDropdownOpen) DrawResolutionDropdown();
 }
@@ -3816,13 +3858,15 @@ private void DrawTitle()
     Color cyan=new(112,228,255),gold=new(255,205,107);
     _batch.Draw(_logo,new Rectangle(96,66,1480,233),Color.White);
     _ui.TextShadow(_batch,"PILOT COMMAND / MISSION SELECT",new Vector2(125,298),.52f,cyan);
-    string[] labels={"NEW GAME","CONTINUE MISSION","SETTINGS","CONTROLS / HELP","EXIT GAME"};
+    _ui.TextFit(_batch,ControllerStatus,
+        new Vector2(125,344),.30f,1640,_pad.IsConnected?Color.LawnGreen:gold);
+    string[] labels={"NEW GAME","CONTINUE MISSION","SETTINGS","CONTROLS / HELP","ONLINE / LAN CO-OP","EXIT GAME"};
     for(int i=0;i<labels.Length;i++)
     {
-        Rectangle r=new(110,375+i*124,827,111);
+        Rectangle r=new(110,375+i*103,827,94);
         DrawMenuButton(r,labels[i],i==_titleMenuSelection,
             i==1&&!(_checkpointUnlocked||_hasDiskSave),.88f);
-        _ui.Text(_batch,"0"+(i+1),new Vector2(961,390+i*124),.43f,cyan);
+        _ui.Text(_batch,"0"+(i+1),new Vector2(961,390+i*103),.43f,cyan);
     }
     DrawCleanPanel(new Rectangle(1020,381,803,608),new Color(144,131,251));
     _ui.TextShadow(_batch,"MK-I INTERCEPTOR",new Vector2(1053,420),.70f,Color.White);
@@ -3832,7 +3876,7 @@ private void DrawTitle()
         new Vector2(1055,916),.43f,720,_hasDiskSave?Color.LawnGreen:cyan);
     _ui.Text(_batch,"DEFAULT DIFFICULTY: "+DifficultyName(_selectedDifficulty),new Vector2(1055,959),.40f,gold);
     _ui.Rect(_batch,new Rectangle(0,1005,ViewWidth,75),new Color(3,12,28,250));
-    _ui.TextShadow(_batch,"UP / DOWN  SELECT       ENTER / A  CONFIRM       F1  HELP       F12  SETTINGS",
+    _ui.TextShadow(_batch,NavigatePrompt+" SELECT   "+ConfirmPrompt+" CONFIRM   "+HelpPrompt+" HELP   "+SettingsPrompt+" SETTINGS",
         new Vector2(ViewWidth/2,1024),.43f,cyan,true);
 }
 
@@ -3846,7 +3890,7 @@ private void DrawPauseMenu()
     string[] labels={"RESUME FLIGHT","SETTINGS","CONTROLS / HELP","RETURN TO BASE"};
     for(int i=0;i<labels.Length;i++)
         DrawMenuButton(new Rectangle(486,365+i*129,950,115),labels[i],i==_pauseMenuSelection,false,.86f);
-    _ui.TextShadow(_batch,"ESC / START  RESUME       ENTER / A  SELECT",
+    _ui.TextShadow(_batch,ResumePrompt+" RESUME     "+ConfirmPrompt+" SELECT",
         new Vector2(ViewWidth/2,929),.47f,cyan,true);
 }
 
@@ -3860,8 +3904,10 @@ private void DrawPauseMenu()
             new Vector2(ViewWidth/2,358),.42f,Color.White,true);
         _ui.TextShadow(_batch,"SCORE  "+_score.ToString("N0", System.Globalization.CultureInfo.InvariantCulture),new Vector2(ViewWidth/2,486),.75f,Color.White,true);
         _ui.TextShadow(_batch,"BEST  "+_bestScore.ToString("N0", System.Globalization.CultureInfo.InvariantCulture),new Vector2(ViewWidth/2,594),.50f,Color.Cyan,true);
-        DrawMenuButton(new Rectangle(535,709,850,94),"ENTER / R: NEW GAME",true,false,.52f);
-        _ui.TextShadow(_batch,_checkpointUnlocked&&!complete?"C: CHECKPOINT     ESC: MAIN MENU":"ESC: MAIN MENU",
+        string replay=CoopActive?(_coopHost!=null?ConfirmPrompt+": PARTY LOBBY":"WAITING FOR HOST"):ConfirmPrompt+": NEW GAME";
+        DrawMenuButton(new Rectangle(535,709,850,94),replay,true,_coopClient!=null,.52f);
+        string checkpoint=CheckpointPrompt+": CHECKPOINT";
+        _ui.TextShadow(_batch,CoopActive?BackPrompt+": LOCAL MENU":_checkpointUnlocked&&!complete?checkpoint+"     "+BackPrompt+": MAIN MENU":BackPrompt+": MAIN MENU",
             new Vector2(ViewWidth/2,848),.35f,Color.Cyan,true);
     }
 
@@ -3929,8 +3975,8 @@ private void DrawPauseMenu()
         _ui.Frame(_batch,new Rectangle(1100,113,254,37),new Color(255,179,72,155),1);
         _batch.Draw(_pickupCredits,new Rectangle(1106,115,31,31),Color.White);
         _ui.Text(_batch,"CR "+_credits.ToString("00000"),new Vector2(1145,112),.39f,new Color(255,215,113));
-        if(_trainingRun)
-            _ui.Text(_batch,"TEST RUN - SCORE NOT SAVED",new Vector2(ViewWidth/2,184),.38f,Color.Orange,true);
+        if(_trainingRun || CoopActive)
+            _ui.Text(_batch,CoopActive?"CO-OP / SEPARATE FROM SOLO SCORES":"TEST RUN - SCORE NOT SAVED",new Vector2(ViewWidth/2,184),.38f,Color.Orange,true);
         foreach(Enemy e in _enemies)
         {
             if(e.Kind!=EnemyKind.Sentinel && e.Kind!=EnemyKind.Warden &&
@@ -3965,6 +4011,9 @@ private void DrawPauseMenu()
 
     protected override void UnloadContent()
     {
+        StopCoop();
+        StopGamePadFeedback();
+        _dualSense.Dispose();
         _audio?.Dispose();_audio=null;
         _scene?.Dispose();_pixel?.Dispose();
         base.UnloadContent();

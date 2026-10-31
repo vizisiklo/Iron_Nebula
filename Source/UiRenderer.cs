@@ -10,7 +10,7 @@ namespace IronNebula;
 /// Variable advances and a common glyph baseline fix the former fixed-cell character spacing.
 /// Atlas: ASCII 32-126, 16 columns, 72x88 px per cell.
 /// </summary>
-internal sealed class UiRenderer
+internal sealed partial class UiRenderer
 {
     private const int GlyphCellWidth=72;
     private const int GlyphCellHeight=88;
@@ -40,11 +40,14 @@ internal sealed class UiRenderer
         return c>=32 && c<=126?c-32:'?'-32;
     }
 
+    private static bool IsControllerGlyph(char c) => c>='\uE000' && c<='\uE017';
+    private static float GlyphAdvance(char c) => IsControllerGlyph(c)?84:Advance[GlyphIndex(c)];
+
     private static float WidthOf(string text)
     {
         float width=0;
         foreach(char c in text)
-            if(c!='\n' && c!='\r') width+=Advance[GlyphIndex(c)];
+            if(c!='\n' && c!='\r') width+=GlyphAdvance(c);
         return width;
     }
 
@@ -60,6 +63,12 @@ internal sealed class UiRenderer
             float y=at.Y+line*LineHeight*px;
             foreach(char ch in value)
             {
+                if(IsControllerGlyph(ch))
+                {
+                    DrawControllerGlyph(batch,ch,new Vector2(x+39*px,y+40*px),px,color);
+                    x+=GlyphAdvance(ch)*px;
+                    continue;
+                }
                 int glyph=GlyphIndex(ch);
                 if(glyph!=0)
                 {
@@ -102,6 +111,7 @@ internal sealed class UiRenderer
                 line="";
             }
             // Split unusually long tokens rather than running outside the panel.
+            if(line.Length>0)line+=" ";
             foreach(char c in word)
             {
                 if(line.Length>0 && WidthOf(line+c)>maxAdvance)
@@ -112,7 +122,6 @@ internal sealed class UiRenderer
                 }
                 line+=c;
             }
-            line+=" ";
         }
         if(line.Trim().Length>0) Text(batch,line.TrimEnd(),new Vector2(at.X,y),scale,color);
     }

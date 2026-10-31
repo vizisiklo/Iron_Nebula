@@ -1,0 +1,25 @@
+name: Controller and co-op checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  controllers:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile game
+        run: dotnet build IronNebula.csproj -c Release
+      - name: Verify controller packets, navigation, and haptic audio
+        run: dotnet run --project Tools/ControllerChecks/ControllerChecks.csproj -c Release
+      - name: Verify six-player loopback networking
+        run: dotnet run --project Tools/CoopChecks/CoopChecks.csproj -c Release

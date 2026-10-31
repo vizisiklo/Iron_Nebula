@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>IronNebula.ControllerChecks</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.6" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <Compile Include="../../Source/DualSenseProtocol.cs" Link="DualSenseProtocol.cs" />
+    <Compile Include="../../Source/DualSenseHaptics.cs" Link="DualSenseHaptics.cs" />
+    <Compile Include="../../Source/ControllerNavigation.cs" Link="ControllerNavigation.cs" />
+    <Compile Include="../../Source/GuiPreferences.cs" Link="GuiPreferences.cs" />
+  </ItemGroup>
+</Project>

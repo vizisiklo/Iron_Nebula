@@ -170,7 +170,7 @@ public sealed partial class IronNebulaGame
             _ui.TextShadow(_batch,details[i],new Vector2(ViewWidth/2,475+i*145),.39f,
                 selected?gold:new Color(146,186,210),true);
         }
-        _ui.TextShadow(_batch,"UP / DOWN OR LEFT / RIGHT  CHOOSE    ENTER / A  LAUNCH    ESC / B  BACK",
+        _ui.TextShadow(_batch,NavigatePrompt+" CHOOSE    "+ConfirmPrompt+" LAUNCH    "+BackPrompt+" BACK",
             new Vector2(ViewWidth/2,910),.36f,cyan,true);
     }
 }

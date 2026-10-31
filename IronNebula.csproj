@@ -8,11 +8,14 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>IronNebula</AssemblyName>
     <RootNamespace>IronNebula</RootNamespace>
-    <ApplicationTitle>IRON NEBULA - Alpha 0.9.11 Mouse and Display UI</ApplicationTitle>
-    <Version>0.9.11</Version>
+    <ApplicationTitle>IRON NEBULA - Alpha 0.9.12 Online Co-op</ApplicationTitle>
+    <Version>0.9.12</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.6" />
+    <PackageReference Include="HidSharp" Version="2.1.0" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <Compile Remove="Tools\**\*.cs" />
     <Content Include="Assets\**\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\**\*.jpg" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Audio\*.mp3" CopyToOutputDirectory="PreserveNewest" />
